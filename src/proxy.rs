@@ -1,4 +1,5 @@
 use crate::backend::BackendNode;
+use crate::metrics;
 use crate::strategy::LoadBalancingStrategy;
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
@@ -8,6 +9,7 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
@@ -64,6 +66,25 @@ impl ProxyServer {
         backends: &[Arc<BackendNode>],
         strategy: &Arc<LoadBalancingStrategy>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        // 1. Prometheus /metrics Endpoint abfangen
+        if req.uri().path() == "/metrics" {
+            let metrics_payload = metrics::generate_prometheus_metrics(backends, strategy);
+            let mut resp = Response::new(
+                Full::new(Bytes::from(metrics_payload))
+                    .map_err(|e| match e {})
+                    .boxed(),
+            );
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+            );
+            return Ok(resp);
+        }
+
+        // Gesamtzähler verarbeiteter Requests erhöhen
+        metrics::TOTAL_REQUESTS.fetch_add(1, Ordering::Relaxed);
+
+        // 2. Upstream Backend Auswahl & Weiterleitung
         let target_backend = match strategy.select_backend(backends) {
             Some(backend) => backend,
             None => {

@@ -1,5 +1,6 @@
 mod backend;
 mod health;
+mod metrics;
 mod proxy;
 mod strategy;
 

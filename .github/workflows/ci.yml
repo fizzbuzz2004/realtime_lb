@@ -1,0 +1,152 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-check:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Rust Toolchain installieren
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: fmt, clippy
+
+      - name: Cargo Cache aktivieren
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatierung prüfen (cargo fmt)
+        run: cargo fmt --check
+
+      - name: Static Analysis (cargo clippy)
+        run: cargo clippy -- -D warnings
+
+  build-and-test:
+    name: Build & Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint-and-check
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Rust Toolchain installieren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo Cache aktivieren
+        uses: Swatinem/rust-cache@v2
+
+      - name: Projekt kompilieren
+        run: cargo build --verbose
+
+      - name: Unit Tests ausführen
+        run: cargo test --verbose
+
+  e2e-integration-test:
+    name: End-to-End HTTP Integration Tests
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Rust Toolchain installieren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo Cache aktivieren
+        uses: Swatinem/rust-cache@v2
+
+      - name: Load Balancer Release-Binary erstellen
+        run: cargo build --release
+
+      - name: Upstream Mock-Backends im Hintergrund starten
+        run: |
+          python3 -c "
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import sys
+          port = int(sys.argv[1])
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/plain')
+                  self.end_headers()
+                  if self.path == '/health':
+                      self.wfile.write(b'OK')
+                  else:
+                      self.wfile.write(f'Backend on port {port}'.encode())
+          HTTPServer(('127.0.0.1', port), Handler).serve_forever()
+          " 8081 &
+
+          python3 -c "
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import sys
+          port = int(sys.argv[1])
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/plain')
+                  self.end_headers()
+                  if self.path == '/health':
+                      self.wfile.write(b'OK')
+                  else:
+                      self.wfile.write(f'Backend on port {port}'.encode())
+          HTTPServer(('127.0.0.1', port), Handler).serve_forever()
+          " 8082 &
+
+          python3 -c "
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import sys
+          port = int(sys.argv[1])
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/plain')
+                  self.end_headers()
+                  if self.path == '/health':
+                      self.wfile.write(b'OK')
+                  else:
+                      self.wfile.write(f'Backend on port {port}'.encode())
+          HTTPServer(('127.0.0.1', port), Handler).serve_forever()
+          " 8083 &
+
+          sleep 1
+
+      - name: Load Balancer im Hintergrund starten
+        run: |
+          ./target/release/realtime_lb &
+          # Warten bis der Health-Checker (5s Intervall) alle Backends als HEALTHY registriert hat
+          sleep 6
+
+      - name: E2E HTTP-Tests ausführen
+        run: |
+          echo "=== Test 1: HTTP Status 200 vom Load Balancer verifizieren ==="
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
+          if [ "$STATUS_CODE" -ne 200 ]; then
+            echo "Fehler: Unerwarteter Status Code $STATUS_CODE"
+            exit 1
+          fi
+          echo "Status Code 200 OK!"
+
+          echo "=== Test 2: Verteilung auf verschiedene Upstream-Backends prüfen ==="
+          RESP1=$(curl -s http://127.0.0.1:8080/)
+          RESP2=$(curl -s http://127.0.0.1:8080/)
+          RESP3=$(curl -s http://127.0.0.1:8080/)
+
+          echo "Response 1: $RESP1"
+          echo "Response 2: $RESP2"
+          echo "Response 3: $RESP3"
+
+          if [ "$RESP1" = "$RESP2" ] && [ "$RESP2" = "$RESP3" ]; then
+            echo "Fehler: Load Balancer verteilt Anfragen nicht auf unterschiedliche Backends!"
+            exit 1
+          fi
+          echo "E2E Integrationstest erfolgreich abgeschlossen!"

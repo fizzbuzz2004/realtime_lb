@@ -1,0 +1,17 @@
+# Rust Build Artifacts
+/target/
+
+# IDE / Editor Konfigurationen
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bk
+
+# OS generierte Dateien
+.DS_Store
+Thumbs.db
+
+# Python Cache (vom Test-Script)
+__pycache__/
+*.pyc
