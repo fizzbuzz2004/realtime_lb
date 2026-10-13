@@ -39,28 +39,31 @@ while ($true) {
         Write-Host "--------------------------------------------------" -ForegroundColor DarkCyan
         
         try {
-            $metricsRaw = Invoke-RestMethod -Uri$MetricsUrl -Method Get -ErrorAction Stop
+            # Verwende curl.exe für verlässlichen Plain-Text Empfang
+            $metricsRaw = curl.exe -s$MetricsUrl
             
-            # Filtere Kommentare (#) heraus und zeige nur aktive Key-Value Metriken
-            $metricsRaw -split "`n" | ForEach-Object {
-                $line = $_.Trim()
-                if ($line -and -not $line.StartsWith("#")) {
-                    if ($line.StartsWith("lb_current_strategy")) {
-                        Write-Host "  Strategy Active : $line" -ForegroundColor Yellow
-                    }
-                    elseif ($line.StartsWith("lb_requests_total")) {
-                        Write-Host "  Total Requests  : $line" -ForegroundColor White
-                    }
-                    elseif ($line.StartsWith("lb_backend_healthy")) {
-                        Write-Host "  Health Status   : $line" -ForegroundColor Gray
-                    }
-                    elseif ($line.StartsWith("lb_backend_latency_ms")) {
-                        Write-Host "  Avg Latency     : $line" -ForegroundColor DarkYellow
-                    }
-                    else {
-                        Write-Host "  $line" -ForegroundColor DarkGray
+            if ($metricsRaw) {$metricsRaw -split "`n" | ForEach-Object {
+                    $line = $_.Trim()
+                    if ($line -and -not $line.StartsWith("#")) {
+                        if ($line.StartsWith("lb_current_strategy")) {
+                            Write-Host "  Strategy Active : $line" -ForegroundColor Yellow
+                        }
+                        elseif ($line.StartsWith("lb_requests_total")) {
+                            Write-Host "  Total Requests  : $line" -ForegroundColor White
+                        }
+                        elseif ($line.StartsWith("lb_backend_healthy")) {
+                            Write-Host "  Health Status   : $line" -ForegroundColor Gray
+                        }
+                        elseif ($line.StartsWith("lb_backend_latency_ms")) {
+                            Write-Host "  Avg Latency     : $line" -ForegroundColor DarkYellow
+                        }
+                        else {
+                            Write-Host "  $line" -ForegroundColor DarkGray
+                        }
                     }
                 }
+            } else {
+                Write-Host "  Leere Antwort von $MetricsUrl" -ForegroundColor Red
             }
         }
         catch {
